@@ -1,0 +1,546 @@
+	opt	h+
+
+trig3		equ	$d013
+gintlk		equ	$03fa
+basicf		equ	$03f8
+
+; IOCB
+
+icchid		equ	$0340
+icdno  		equ	$0341
+iccmd  		equ	$0342
+icstat 		equ	$0343
+icbufa 		equ	$0344
+icputb 		equ	$0346
+icbufl 		equ	$0348
+icax1  		equ	$034a
+icax2  		equ	$034b
+icax3  		equ	$034c
+icax4  		equ	$034d
+icax5  		equ	$034e
+icax6  		equ	$034f
+
+ciov 		equ	$e456
+
+; buffer config
+
+buff_adr	equ	$4000
+buff_len	equ	$2000
+
+; init segment address
+
+	org	$3400
+
+; clear DL area & TRiG3 history area
+
+init	ldx	#$ff		; only OS-ROM enabled
+	stx	$d301
+	stx	basicf		; disable BASIC
+
+	inx			; clear X reg. ($FF+1 = $00)
+
+	txa
+in0	sta	dl+$000,x
+	sta	dl+$100,x
+	cpx	#[cnt-tr3hist]
+	bcs	*+5
+	sta	tr3hist,x
+	inx
+	bne	in0
+
+; turn off screen
+
+	sta	$22f
+	
+; wait for VBL!	
+	
+	lda	$14
+	cmp	$14
+	beq	*-2
+
+; fill the $A000-$BFFF area with "checkerboard" pattern (0x55 alternating with 0xAA every line)
+
+	ldx	#$1f
+	ldy	#$00
+in1	tya
+	asl 	@
+	asl	@
+	lda	#$55
+	bcc	*+4
+	lda	#$aa
+
+in2	sta	$a000,y
+
+	iny
+	bne	in1
+
+	inc	in2+2
+	dex
+	bpl	in1
+
+	rts
+
+	ini 	init
+
+; program load addresss
+
+	org	$3000
+
+dl	org	*+$200		; reserve space for Display List
+tr3hist	org	*+$20		; reserve space for TRiG3 history
+cnt	brk			; time-base (frame counter)
+
+; ---------------------------------------------------------------------
+; scre
+
+;                 0123456789abcdef0123456789abcdef
+msg0	dta	d' +++ Simple Cart DUMP v.1.1 +++ '*
+	dta	d' by Seban/Slight (p) 2022.06.06 '
+	
+tr3inf	dta	d'TRIG3:          '*
+msg1	dta	d'  please insert CARTRIDGE now!  '*
+
+msg2	dta	d' $A000-$BFFF area preview:      '*
+	
+msg3	dta	d' -> cart detected, dump done <- '*
+msg4	dta	d' wait cart off or SHIFT to save '*
+
+; ---------------------------------------------------------------------
+;
+; text messages for I/O stage
+;
+; editor codes:
+;
+;	29  - cursor one line down
+;	253 - bell
+;	$9b - end of line
+
+txt0	dta	29,c" I/O Error! Press any key to exit! "*,253,$9b	
+txt1	dta	29,c"Opening output file for write...",29,$9b
+txt2	dta	29,c"Writing $A000-$BFFF to file...",$9b
+txt3	dta	29,c" All done! Press any key to exit! "*,$9b
+
+; output filename
+
+fname	dta	c"D:A000DUMP.BIN",$9b
+
+
+; -----------------------------------------------------------------------------
+;
+; this subroutine generates a display list for main dumper screen
+	
+make_dl	ldx	#3		; three times...
+	lda	#$70		; 8 empty lines
+	jsr	pdl
+	lda	#$42		; 1st info line in ANITC mode #2 (+LMS)
+	jsr	pdl
+	lda	<msg0		; lo-byte of text address
+	jsr	pdl
+	lda	>msg0		; hi-byte of text address
+	jsr	pdl
+	lda	#$02		; 2nd line of info (again in ANTIC mode #2)
+	jsr	pdl
+	
+	lda	#$10		; two empty lines
+	jsr	pdl
+	
+	lda	#$07		; trig3 info line (in ANTIC mode #7)
+	jsr	pdl
+
+	lda	#$10		; two empty lines
+	jsr	pdl
+
+	lda	#$4f		; one line of mode 15 (+LMS) contains TRiG3 history data
+	jsr	pdl
+	lda	#<tr3hist
+	jsr	pdl
+	lda	#>tr3hist
+	jsr	pdl
+
+	lda	#$10		; two empty lines
+	jsr	pdl
+
+	lda	#$42		; and again ANTIC mode #2 + LMS with "insert cartridge message"
+	jsr	pdl
+	lda	<msg1
+	jsr	pdl
+	lda	>msg1
+	jsr	pdl
+
+	lda	#$10		; two empty lines
+	jsr	pdl
+
+
+	lda	#$4f		; and again one line of mode 15 (+LMS) contains TRiG3 history data
+	jsr	pdl
+	lda	#<tr3hist
+	jsr	pdl
+	lda	#>tr3hist
+	jsr	pdl
+
+	lda	#$40		; empty lines
+	jsr	pdl
+
+	lda	#$42		; ANTIC mode #2 +LMS with "prev. area info message"
+	jsr	pdl
+	lda	<msg2
+	jsr	pdl
+	lda	>msg2
+	jsr	pdl
+	
+	lda	#$10		; one empty line
+	jsr	pdl
+	
+	ldy	#128		; no generate 128 lines of...
+mdl0	lda	#$4f		; $a000-$bfff preview window
+	jsr	pdl
+scrl	lda	#$00
+	jsr	pdl
+scrh	lda	#$a0
+	jsr	pdl
+	
+	clc			; calc. next line addr.
+	lda	#$40		; to fit 8192 bytes in 128 lines (32 bytes each) we need to show only 1st 32 bytes...
+	adc	scrl+1		; of cartridge area with 64 byte steps (128*64 = 8192 [$2000])
+	sta	scrl+1
+	bne	*+5
+	inc	scrh+1
+	
+	dey			; decr. line counter
+	bne	mdl0		; done?
+
+	lda	#$41		; end of display list
+	jsr	pdl
+	lda	<dl
+	jsr	pdl
+	lda	>dl		; no jump to pdl routine on last DL byte, because pdl is below ;-)
+
+pdl	sta	dl		; put byte for DL-creation
+	inc	pdl+1		; increment lo-byte of address
+	bne	*+5
+	inc	pdl+2		; increment hi-byte of address
+	dex			; decrement X reg. (repetition counter)
+	bne	pdl		; repeat loop until X reg. is not zero!
+	inx			; set X reg. to #1 (next call without changing the X reg. will give no loop repetition)
+	rts			; return from subroutine!
+
+
+; -----------------------------------------------------------------------------
+;
+; this subroutine updates the Trig3 history
+
+trig3_update
+
+	lda	trig3		; get TRiG3 value
+	pha			; store on stack
+	lsr	@		; move 1st bit to Carry
+	
+	ldx	#31		; set loop counter (32 bytes)
+w0	rol	tr3hist,x	; shift whole line by one-bit to the left,
+				; and bit from Carry will be shifted from the right side
+
+	dex			; decrement loop counter
+	bpl	w0		; repeat until done
+	
+	pla			; get TRiG3 value from stack
+	clc
+	adc	#'0'+96		; convert to ANTIC screen code
+	sta	tr3inf+7	; and put as digit to the info line
+	
+	rts
+
+; -----------------------------------------------------------------------------
+; this procedure setc the background color!
+;
+; IN: A_reg -> backgroud color
+
+set_colback
+
+	pha
+	jsr	vbl
+	pla
+	sta	$d018
+	rts
+
+; -----------------------------------------------------------------------------
+;
+; wait for VBLANK
+
+vbl	lda	$d40b
+	bne	*-3
+	lda	$d40b
+	beq	*-3
+	rts
+
+; -----------------------------------------------------------------------------
+;
+; closes, and re-open the screen editor ("E:")
+
+scr_ini	ldx	#2
+	jsr	editor
+
+	ldx	#0
+editor	lda	$e401,x
+	pha
+	lda	$e400,x
+	pha
+	rts
+
+; ---------------------------------------------------------------------
+;
+; print subroutine
+;
+; A reg. lo byte of msg addr
+; Y reg. hi byte of msg addr
+;
+
+print	ldx	#$00		; select IOCB channel #0 (screen editor device)
+	sta	icbufa,x	; set lo-byte of buffer address
+	tya
+	sta	icbufa+1,x	; set hi-byte of buffer address
+	
+	lda	#$ff		; set lo-byte of message length
+	sta	icbufl,x
+	txa
+	sta	icbufl+1,x	; set hi-byte of message length
+	
+	lda	#$09		; "PUT RECORD" command
+        sta	iccmd,x
+        
+	jmp	ciov 		; call main CIO routine
+
+; ---------------------------------------------------------------------
+;
+; get key subroutine!
+
+get_key	lda $e425
+	pha
+	lda $e424
+	pha
+	rts
+
+; ---------------------------------------------------------------------
+;
+; I/O subroutines
+
+close	ldx	#$10		; select IOCB #1 (channel #1)
+	lda	#$0c
+	sta	iccmd,x
+	jmp	ciov
+
+open	ldx	#$10            ; select IOCB #1
+	
+	lda	#$03            ; cmd: OPEN
+	sta	iccmd,x
+	lda	#<fname         ; set <lo of filename address
+	sta	icbufa,x
+	lda	#>fname		; set >hi of filename address
+	sta	icbufa+1,x
+	lda	#$08            ; open for write
+	sta	icax1,x
+	lda	#$00
+	sta	icax2,x 
+	
+	jmp	ciov		; jump to main CIO routine
+
+write	ldx	#$10           	; select IOCB #1
+	lda	#$0b 	        ; binary write!
+	sta	iccmd,x
+
+	lda 	#<buff_adr	; set buffer address (lo)
+	sta	icbufa,x
+	
+	lda	#>buff_adr	; set buffer address (hi)
+	sta	icbufa+1,x
+
+	lda	#<buff_len      ; set buffer len (lo)
+	sta	icbufl,x
+	lda	#>buff_len	; set buffer len (hi)
+	sta	icbufl+1,x
+	
+	jmp	ciov
+
+; ---------------------------------------------------------------------
+;
+; init the h/w registers (Antic, GTIA)
+
+sc_set	ldx	<dl		; set display-list address
+	ldy	>dl
+	stx	$d402
+	sty	$d403
+	lda	#0
+	sta	$d01a		; set frame color to zero!
+	dec	$d017		; set font luminance to max! ($fe)
+
+	lda	#$21		; turn on the screen (narrow size)
+	sta	$d400
+
+	rts
+
+; ---------------------------------------------------------------------
+;
+; main code starts here
+
+st	sei			; disable IRQ
+	inc	$d40e		; disable NMI
+	lda	$d40b		; wait for...
+	bne	*-3		; ... scanline #0
+	sta	$d400		; turn off the screen!
+	
+	jsr	make_dl		; make display list
+	
+	jsr	vbl
+	jsr	sc_set		; init the DL & main colors!
+	
+	lda	#$c4		; set background color to green!
+	jsr	set_colback
+	
+
+wait	jsr	vbl		; wait for vblank
+	jsr	sc_set		; re-init hw-regs on each frame (inserting cart during working computer may cause bus congestions)
+	
+	inc	cnt		; increment frame count (our time-base)
+	
+	lda	cnt		; check the counter
+	and	#$0f		; for evert 16th frame
+	bne	sk_eor		; skip if not!
+	
+	ldx	#31		; line length minus one
+
+xrl	lda	msg1,x		; load message char into A
+	eor	#$80		; xoring last bit (#7) give us inverse video effect!
+	sta	msg1,x		; store xored value
+	dex			; decr. loop counter
+	bpl	xrl		; loop until done
+	
+sk_eor	jsr	trig3_update	; update TRiG3 history
+
+	ldx	#7		; check if the TRIG3 is active long enough (8*8 = 64 frames * (1/50) sec --> ~1.28 sec.)
+	lda	#$ff		; def. value for "anding" all bits
+
+wand	and	tr3hist+$18,x	; get byte from TRiG3 history, then AND this value with A register
+	dex			; decrement loop counter
+	bpl	wand		; repeat until done
+	cmp	#$ff		; check for result! if any bit of history data was "0" then A reg. will differ from $FF value
+	bne	wait		; if there is no stable TRiG3 repeat loop!
+
+	lda	#0		; clear the time-base (frame counter)
+	sta	cnt
+
+; cartridge area memory copy routine
+;
+; copies $A000-$BFFF to $4000-$6FFF area
+
+	ldx	#$20		; set number of pages (32*256 = 8192 [$2000])
+	ldy	#0		; clear Y reg. (page byte index reg.)
+	
+cps	lda	$a000,y		; load page data from cart area
+cpd	sta	$4000,y		; copy to RAM location
+
+	iny			; inc. loop counter
+	bne	cps		; all 256 bytes?
+	
+	inc	cps+2		; increment hi-byte of src. pointer (self mod. code)
+	inc	cpd+2		; increment hi-byte of dst. pointer (self mod. code)
+	dex			; decr. page counter
+	bne	cps		; repeat until all pages copied
+
+	lda	#$84		; set background color to blue!
+	jsr	set_colback
+
+	ldx	#0		; try to disable the cartridge by writing to the $D5xx page
+	txa			; this will work for most "turbo" carts from Poland.
+tryoff	sta	$d500,x
+	inx
+	bne	tryoff
+
+wai2	jsr	vbl		; wait for vblank
+	jsr	sc_set		; re-init hw-regs on each frame (inserting cart during working computer may cause bus congestions)
+
+	jsr	trig3_update	; update TRiG3 history
+
+	inc	cnt		; increment loop counter!
+	bne	skp_set		; not zero? skip
+	
+	lda	#$44		; set col-back after 256 frames  to violet
+	jsr	set_colback	; (TRiG3 is still on! maybe time to press SHIFT?)
+	
+skp_set	lda	cnt		; check last bit
+	asl	@		; (move to carry bit)
+
+	ldx	#$1f		; set msg. len
+msc	lda	msg3,x		; select msg3 when
+	bcc	*+5		; Carry bit is cleared
+	lda	msg4,x		; or msg4 when Carry bit is set
+	
+	sta	msg1,x		; copy msg to screen!
+	
+	dex			; decrement loop counter
+	bpl	msc		; msg. copy loop
+
+	ldx	#15		; check if the TRIG3 is inactive long enough (16*8 = 128 frames * (1/50) sec --> ~2.56 sec.)
+	lda	#0		; default value for finding any active "1" in history data
+wor	ora	tr3hist+$10,x	; load TRiG3 history data, then OR this value with A register
+	dex			; decr. loop counter
+	bpl	wor		; repeat until done!
+	ora	#0		; any active bit ("1") found?
+	beq	exit		; no? then exit!
+
+no_tr3	lda	$d20f		; read POKEY SKSTAT register
+	and	#$08		; test for SHIFT key pressed
+	bne	wai2		; no SHIFT? then LOOP!
+
+exit	lda	trig3		; copy trig3 state...
+	sta	gintlk		; ... to gintlk to avoid OS-lockout!
+	
+	lda	#$ff		; only OS-ROM enabled!
+	sta	$d301
+	
+	lda	#$01		; disable BASIC (by setting BASIC disable flag!)
+	sta	basicf
+	
+	lda	#$80		; set memtop to $80 (we can't be sure the cartridge is disabled at all!)
+	sta	$6a
+	
+	lsr	$d40e		; restore NMI
+	cli			; restore IRQ
+
+	jsr	scr_ini		; init screen (open editor, etc.)
+
+	lda	<txt1		; print out "Opening..." msg.
+	ldy	>txt1
+	jsr	print
+	
+	lda	<fname		; print out the filename on screen...
+	ldy	>fname
+	jsr	print
+	
+	jsr	close		; close channel #1
+	bmi	io_err		; check for errors
+	
+	jsr	open		; open channel #1
+	bmi	io_err		; check for errors
+	
+	lda	<txt2		; print out the "Writing..." msg.
+	ldy	>txt2
+	jsr	print
+	
+	jsr	write		; write buffer do I/O device
+	bmi	io_err		; check for errors
+	
+	jsr	close		; close channel #1
+	bmi	io_err		; check for errors
+
+	lda	<txt3		; print out the "All done..." msg.
+	ldy	>txt3
+	jsr	print
+	jmp	ex_warm		; exit (warm start)
+	
+io_err	lda	<txt0		; print out the "I/O error" msg.
+	ldy	>txt0
+	jsr	print
+	jsr	close		; close che I/O channel
+ex_warm	jsr	get_key		; wait for key!
+	jmp	$e474		; and do a warm-start!
+	
+	run	st		; set the RUN vector
