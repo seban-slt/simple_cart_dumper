@@ -1,3 +1,13 @@
+;------------------------------------------------------------------------------
+;
+; Simple Cart Dumper - source code, done by Seban/Slight @ 2022.06.03
+;
+; .O.   source code published at 2022.06.13 @ GitHub
+; ..O
+; OOO   >>> Public Domain <<<
+;
+; >>> use XASM (https://github.com/pfusik/xasm) to compile
+
 	opt	h+
 
 trig3		equ	$d013
@@ -7,20 +17,20 @@ basicf		equ	$03f8
 ; IOCB
 
 icchid		equ	$0340
-icdno  		equ	$0341
-iccmd  		equ	$0342
-icstat 		equ	$0343
-icbufa 		equ	$0344
-icputb 		equ	$0346
-icbufl 		equ	$0348
-icax1  		equ	$034a
-icax2  		equ	$034b
-icax3  		equ	$034c
-icax4  		equ	$034d
-icax5  		equ	$034e
-icax6  		equ	$034f
+icdno		equ	$0341
+iccmd		equ	$0342
+icstat		equ	$0343
+icbufa		equ	$0344
+icputb		equ	$0346
+icbufl		equ	$0348
+icax1		equ	$034a
+icax2		equ	$034b
+icax3		equ	$034c
+icax4		equ	$034d
+icax5		equ	$034e
+icax6		equ	$034f
 
-ciov 		equ	$e456
+ciov		equ	$e456
 
 ; buffer config
 
@@ -63,7 +73,7 @@ in0	sta	dl+$000,x
 	ldx	#$1f
 	ldy	#$00
 in1	tya
-	asl 	@
+	asl	@
 	asl	@
 	lda	#$55
 	bcc	*+4
@@ -80,7 +90,7 @@ in2	sta	$a000,y
 
 	rts
 
-	ini 	init
+	ini	init
 
 ; program load addresss
 
@@ -307,7 +317,7 @@ print	ldx	#$00		; select IOCB channel #0 (screen editor device)
 	lda	#$09		; "PUT RECORD" command
         sta	iccmd,x
         
-	jmp	ciov 		; call main CIO routine
+	jmp	ciov		; call main CIO routine
 
 ; ---------------------------------------------------------------------
 ;
@@ -343,11 +353,11 @@ open	ldx	#$10            ; select IOCB #1
 	
 	jmp	ciov		; jump to main CIO routine
 
-write	ldx	#$10           	; select IOCB #1
-	lda	#$0b 	        ; binary write!
+write	ldx	#$10		; select IOCB #1
+	lda	#$0b	        ; binary write!
 	sta	iccmd,x
 
-	lda 	#<buff_adr	; set buffer address (lo)
+	lda	#<buff_adr	; set buffer address (lo)
 	sta	icbufa,x
 	
 	lda	#>buff_adr	; set buffer address (hi)
